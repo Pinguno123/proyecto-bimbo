@@ -4,6 +4,7 @@ import gatoCool from './assets/gatoCool.png'
 import gatoCorazon from './assets/gatoCorazon.png'
 import gatoDudoso from './assets/gatoDudoso.png'
 import { supabase } from './lib/supabaseClient'
+import * as Select from '@radix-ui/react-select'
 
 const PASSWORD_COLUMN = 'contraseña_usuario'
 const USER_STORAGE_KEY = 'diarioUsuario'
@@ -37,6 +38,141 @@ const HintModal = ({ onClose }) => (
   </div>
 )
 
+const GalleryPreviewModal = ({ item, onClose }) => {
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloadStatus, setDownloadStatus] = useState({ type: null, message: '' })
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  useEffect(() => {
+    setIsDownloading(false)
+    setDownloadStatus({ type: null, message: '' })
+  }, [item])
+
+  useEffect(() => {
+    if (!downloadStatus.message) return
+    const timer = setTimeout(() => {
+      setDownloadStatus({ type: null, message: '' })
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [downloadStatus])
+
+  if (!item) return null
+
+  const handleDownload = async () => {
+    if (!item?.recurso_imagen || isDownloading) return
+    setDownloadStatus({ type: null, message: '' })
+    setIsDownloading(true)
+
+    try {
+      const response = await fetch(item.recurso_imagen, { mode: 'cors' })
+      if (!response.ok) {
+        throw new Error('No pudimos descargar la imagen.')
+      }
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const baseName =
+        (item.pie_imagen || `recuerdo-${item.id ?? Date.now()}`)
+          .toString()
+          .trim()
+          .replace(/\s+/g, '-')
+          .replace(/[^\w-]/g, '')
+          .toLowerCase() || 'recuerdo'
+      link.href = objectUrl
+      link.download = `${baseName}.jpg`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(objectUrl)
+      setDownloadStatus({ type: 'success', message: 'Descarga iniciada.' })
+    } catch (error) {
+      console.error('Download error:', error)
+      setDownloadStatus({
+        type: 'error',
+        message: 'No pudimos descargar la imagen. Int\u00e9ntalo m\u00e1s tarde.',
+      })
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="preview-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="preview-close"
+          onClick={onClose}
+          aria-label="Cerrar vista previa"
+        >
+          &times;
+        </button>
+        <div className="preview-image-wrapper">
+          <a
+            href={item.recurso_imagen}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="preview-image-link"
+          >
+            <img
+              src={item.recurso_imagen}
+              alt={item.pie_imagen || 'Recuerdo de la galeria'}
+            />
+          </a>
+        </div>
+        <div className="preview-details">
+          <h4>{item.pie_imagen || 'Sin pie de foto'}</h4>
+          <p className="meta">
+            Subido por {item.usuarios?.nombre_usuario ?? 'Usuario'} -{' '}
+            {new Date(item.created_at).toLocaleString()}
+          </p>
+          <p className="meta">Haz clic en la imagen para abrirla en una pestaña nueva.</p>
+        </div>
+        <div className="preview-actions">
+          <button
+            type="button"
+            className="secondary-button preview-download"
+            onClick={handleDownload}
+            disabled={isDownloading}
+          >
+            Descargar
+          </button>
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+        {downloadStatus.message ? (
+          <p
+            className={`photo-status ${downloadStatus.type === 'error' ? 'error' : 'success'
+              }`}
+            role="status"
+          >
+            {downloadStatus.message}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -69,6 +205,7 @@ function App() {
   const [galleryForm, setGalleryForm] = useState({ caption: '', file: null })
   const [galleryStatus, setGalleryStatus] = useState({ type: null, message: '' })
   const [isUploadingGallery, setIsUploadingGallery] = useState(false)
+  const [previewItem, setPreviewItem] = useState(null)
 
   const [photoUrlInput, setPhotoUrlInput] = useState('')
   const [photoStatus, setPhotoStatus] = useState({ type: null, message: '' })
@@ -263,15 +400,19 @@ function App() {
     }
   }
 
-  const handleMoodFieldChange = (event) => {
+  const handleMoodValueChange = (newValue) => {
+  setMoodForm((prev) => ({ ...prev, value: newValue }))
+}
+
+const handleMoodFieldChange = (event) => {
     const { name, value } = event.target
     setMoodForm((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleMoodSubmit = async (event) => {
-    event.preventDefault()
-    if (!userData) return
-    if (!moodForm.value.trim() && !moodForm.note.trim()) return
+const handleMoodSubmit = async (event) => {
+  event.preventDefault()
+  if (!userData) return
+  if (!moodForm.value.trim() && !moodForm.note.trim()) return
 
     try {
       const { data, error } = await supabase
@@ -294,6 +435,8 @@ function App() {
         id_usuario: data.id_usuario ?? userData.id,
       }
       setMoodEntries((prev) => [enriched, ...prev])
+      setMoodForm({ value: '', note: '' })
+      setContentError('')
     } catch (error) {
       console.error('Error al registrar estado de ánimo:', error)
       setContentError('No se pudo guardar el estado de ánimo.')
@@ -653,12 +796,6 @@ function App() {
             )}
 
             <div className="profile-details">
-              {/*               <p>
-                <strong>ID:</strong> {userData.id}
-              </p>
-              <p>
-                <strong>Nombre:</strong> {userData.nombre_usuario}
-              </p> */}
               <button type="button" className="logout-button" onClick={handleLogout}>
                 Cerrar sesion
               </button>
@@ -732,20 +869,7 @@ function App() {
                   <label htmlFor="moodValue" className="field-label">
                     Selecciona un estado
                   </label>
-                  <select
-                    id="moodValue"
-                    name="value"
-                    className="field-input"
-                    value={moodForm.value}
-                    onChange={handleMoodFieldChange}
-                  >
-                    <option value="">Selecciona...</option>
-                    <option value="feliz">Feliz</option>
-                    <option value="agradecidos">Agradecidos</option>
-                    <option value="enamorados">Muy enamorados</option>
-                    <option value="nostalgicos">Nostálgicos</option>
-                    <option value="creativos">Creativos</option>
-                  </select>
+                  <MoodSelect id="moodValue" value={moodForm.value} onChange={handleMoodValueChange} />
 
                   <label htmlFor="moodNote" className="field-label">
                     Nota del momento
@@ -909,7 +1033,17 @@ function App() {
                   <div className="gallery-grid">
                     {galleryItems.map((item) => (
                       <article key={item.id} className="gallery-card">
-                        <img src={item.recurso_imagen} alt={item.pie_imagen || 'Recuerdo'} />
+                        <button
+                          type="button"
+                          className="gallery-card__preview"
+                          onClick={() => setPreviewItem(item)}
+                          aria-label={`Ver imagen ${item.pie_imagen || 'sin pie de foto'} en grande`}
+                        >
+                          <img
+                            src={item.recurso_imagen}
+                            alt={item.pie_imagen || 'Recuerdo'}
+                          />
+                        </button>
                         <div>
                           <strong>{item.pie_imagen || 'Sin pie de foto'}</strong>
                           <p className="meta">
@@ -919,13 +1053,15 @@ function App() {
                             {new Date(item.created_at).toLocaleString()}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          className="remove-button"
-                          onClick={() => handleDeleteGalleryItem(item.id)}
-                        >
-                          Quitar
-                        </button>
+                        <div className="gallery-card__actions">
+                          <button
+                            type="button"
+                            className="remove-button"
+                            onClick={() => handleDeleteGalleryItem(item.id)}
+                          >
+                            Quitar
+                          </button>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -981,8 +1117,73 @@ function App() {
       ) : null}
 
       {showHint ? <HintModal onClose={() => setShowHint(false)} /> : null}
+      {previewItem ? (
+        <GalleryPreviewModal item={previewItem} onClose={() => setPreviewItem(null)} />
+      ) : null}
     </div>
   )
 }
 
 export default App
+const moodOptions = [
+  { value: 'feliz', label: 'Feliz' },
+  { value: 'agradecidos', label: 'Agradecidos' },
+  { value: 'enamorados', label: 'Muy enamorados' },
+  { value: 'nostalgicos', label: 'Nostalgicos' },
+  { value: 'creativos', label: 'Creativos' },
+]
+
+const MoodSelect = ({ id, value, onChange }) => (
+  <Select.Root value={value} onValueChange={onChange}>
+    <Select.Trigger
+      id={id}
+      className="select-trigger field-input field-select"
+      aria-label="Estado de ánimo"
+    >
+      <Select.Value className="select-value" placeholder="Selecciona..." />
+      <Select.Icon className="select-icon">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <polyline
+            points="6 9 12 15 18 9"
+            fill="none"
+            stroke="#6a3b23"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </Select.Icon>
+    </Select.Trigger>
+
+    <Select.Portal>
+      <Select.Content className="select-content" position="popper" sideOffset={8}>
+        <Select.Viewport className="select-viewport">
+          {moodOptions.map((option) => (
+            <Select.Item key={option.value} value={option.value} className="select-item">
+              <Select.ItemIndicator className="select-item-indicator">
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <polyline
+                    points="5 13 9 17 19 7"
+                    fill="none"
+                    stroke="#6a3b23"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </Select.ItemIndicator>
+              <Select.ItemText>{option.label}</Select.ItemText>
+            </Select.Item>
+          ))}
+        </Select.Viewport>
+      </Select.Content>
+    </Select.Portal>
+  </Select.Root>
+)
+
+
+
+
+
+
+
