@@ -125,18 +125,15 @@ function App() {
         const [estadoRes, recordatoriosRes, galeriaRes] = await Promise.all([
           supabase
             .from('estado')
-            .select('id, estado_animo, motivo, created_at')
-            .eq('id_usuario', userData.id)
+            .select('id, estado_animo, motivo, created_at, id_usuario, usuarios ( nombre_usuario )')
             .order('created_at', { ascending: false }),
           supabase
             .from('recordatorios')
-            .select('id, recordatorio, created_at')
-            .eq('id_usuario', userData.id)
+            .select('id, recordatorio, created_at, id_usuario, usuarios ( nombre_usuario )')
             .order('created_at', { ascending: false }),
           supabase
             .from('galeria')
-            .select('id, recurso_imagen, pie_imagen, created_at')
-            .eq('id_usuario', userData.id)
+            .select('id, recurso_imagen, pie_imagen, created_at, id_usuario, usuarios ( nombre_usuario )')
             .order('created_at', { ascending: false }),
         ])
 
@@ -144,11 +141,13 @@ function App() {
         if (recordatoriosRes.error) throw recordatoriosRes.error
         if (galeriaRes.error) throw galeriaRes.error
 
-        setMoodEntries(estadoRes.data ?? [])
-        if (estadoRes.data?.length) {
+        const estados = estadoRes.data ?? []
+        setMoodEntries(estados)
+        const lastSelfMood = estados.find((item) => item.id_usuario === userData.id)
+        if (lastSelfMood) {
           setMoodForm({
-            value: estadoRes.data[0].estado_animo ?? '',
-            note: estadoRes.data[0].motivo ?? '',
+            value: lastSelfMood.estado_animo ?? '',
+            note: lastSelfMood.motivo ?? '',
           })
         } else {
           setMoodForm({ value: '', note: '' })
@@ -201,9 +200,6 @@ function App() {
 
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(USER_STORAGE_KEY)
-      if (userData) {
-        window.localStorage.removeItem(getStartDateKey(userData.id))
-      }
     }
   }
 
@@ -258,6 +254,13 @@ function App() {
 
   const handleStartDateChange = (value) => {
     setStartDate(value)
+    if (userData && typeof window !== 'undefined') {
+      if (value) {
+        window.localStorage.setItem(getStartDateKey(userData.id), value)
+      } else {
+        window.localStorage.removeItem(getStartDateKey(userData.id))
+      }
+    }
   }
 
   const handleMoodFieldChange = (event) => {
@@ -278,14 +281,19 @@ function App() {
           estado_animo: moodForm.value.trim(),
           motivo: moodForm.note.trim(),
         })
-        .select('id, estado_animo, motivo, created_at')
+        .select('id, estado_animo, motivo, created_at, id_usuario, usuarios ( nombre_usuario )')
         .single()
 
       if (error) {
         throw error
       }
 
-      setMoodEntries((prev) => [data, ...prev])
+      const enriched = {
+        ...data,
+        usuarios: data.usuarios ?? { nombre_usuario: userData.nombre_usuario },
+        id_usuario: data.id_usuario ?? userData.id,
+      }
+      setMoodEntries((prev) => [enriched, ...prev])
     } catch (error) {
       console.error('Error al registrar estado de ánimo:', error)
       setContentError('No se pudo guardar el estado de ánimo.')
@@ -294,9 +302,10 @@ function App() {
 
   const handleAddReminder = async (event) => {
     event.preventDefault()
+    const formElement = event.currentTarget
     if (!userData) return
 
-    const formData = new FormData(event.currentTarget)
+    const formData = new FormData(formElement)
     const reminderText = formData.get('reminder')?.toString().trim()
     if (!reminderText) return
 
@@ -307,15 +316,23 @@ function App() {
           id_usuario: userData.id,
           recordatorio: reminderText,
         })
-        .select('id, recordatorio, created_at')
+        .select('id, recordatorio, created_at, id_usuario, usuarios ( nombre_usuario )')
         .single()
 
       if (error) {
         throw error
       }
 
-      setReminders((prev) => [data, ...prev])
-      event.currentTarget.reset()
+      const enriched = {
+        ...data,
+        usuarios: data.usuarios ?? { nombre_usuario: userData.nombre_usuario },
+        id_usuario: data.id_usuario ?? userData.id,
+      }
+      setReminders((prev) => [enriched, ...prev])
+      if (formElement) {
+        formElement.reset()
+      }
+      setContentError('')
     } catch (error) {
       console.error('Error al guardar recordatorio:', error)
       setContentError('No se pudo guardar el recordatorio.')
@@ -352,6 +369,7 @@ function App() {
 
   const handleGalleryUpload = async (event) => {
     event.preventDefault()
+    const formElement = event.currentTarget
     if (!userData) return
     if (!galleryForm.file) {
       setGalleryStatus({ type: 'error', message: 'Selecciona una imagen.' })
@@ -396,18 +414,25 @@ function App() {
           recurso_imagen: imageUrl,
           pie_imagen: galleryForm.caption.trim(),
         })
-        .select('id, recurso_imagen, pie_imagen, created_at')
+        .select('id, recurso_imagen, pie_imagen, created_at, id_usuario, usuarios ( nombre_usuario )')
         .single()
 
       if (error) throw error
 
-      setGalleryItems((prev) => [data, ...prev])
+      const enriched = {
+        ...data,
+        usuarios: data.usuarios ?? { nombre_usuario: userData.nombre_usuario },
+        id_usuario: data.id_usuario ?? userData.id,
+      }
+      setGalleryItems((prev) => [enriched, ...prev])
       setGalleryForm({ caption: '', file: null })
       setGalleryStatus({
         type: 'success',
         message: 'Imagen subida y guardada exitosamente.',
       })
-      event.currentTarget.reset()
+      if (formElement) {
+        formElement.reset()
+      }
     } catch (error) {
       console.error('Error al subir imagen:', error)
       setGalleryStatus({
@@ -560,6 +585,7 @@ function App() {
           placeholder="Ingresa tu nombre"
           value={formValues.username}
           onChange={handleChange}
+          required={true}
         />
 
         <label htmlFor="password">Contraseña</label>
@@ -576,6 +602,7 @@ function App() {
           onFocus={() => setShow(true)}
           onBlur={() => setShow(false)}
           autoComplete="current-password"
+          required={true}
         />
 
 
@@ -679,6 +706,7 @@ function App() {
                   value={startDate}
                   onChange={(event) => handleStartDateChange(event.target.value)}
                   className="field-input"
+                  required={true}
                 />
                 {daysTogether !== null ? (
                   <div className="highlight-card" role="status">
@@ -698,8 +726,7 @@ function App() {
               <div className="feature-section">
                 <h3>Estado de ánimo</h3>
                 <p>
-                  Registra cómo se sienten hoy; cada entrada se guarda en la tabla
-                  <code>estado</code>.
+                  Registra cómo se sienten hoy.
                 </p>
                 <form className="mood-form" onSubmit={handleMoodSubmit}>
                   <label htmlFor="moodValue" className="field-label">
@@ -744,6 +771,9 @@ function App() {
                       <li key={item.id} className="entry-card mood-entry">
                         <div>
                           <strong>{item.estado_animo || 'Sin estado'}</strong>
+                          <p className="meta">
+                            Por {item.usuarios?.nombre_usuario ?? 'Usuario'}
+                          </p>
                           {item.motivo ? <p>{item.motivo}</p> : null}
                         </div>
                         <span className="meta">
@@ -765,8 +795,7 @@ function App() {
               <div className="feature-section">
                 <h3>Recordatorio de pareja</h3>
                 <p>
-                  Guarda actividades o detalles importantes. Cada nota se almacena en la
-                  tabla <code>recordatorios</code>.
+                  Guarda actividades o detalles importantes, cada nota importa!
                 </p>
                 <form className="inline-form" onSubmit={handleAddReminder}>
                   <input
@@ -774,6 +803,7 @@ function App() {
                     name="reminder"
                     className="field-input"
                     placeholder="Planear cine, comprar flores..."
+                    required={true}
                   />
                   <button type="submit" className="secondary-button">
                     Guardar
@@ -786,6 +816,9 @@ function App() {
                       <li key={item.id} className="entry-card">
                         <div>
                           <span>{item.recordatorio}</span>
+                          <p className="meta">
+                            Por {item.usuarios?.nombre_usuario ?? 'Usuario'}
+                          </p>
                           <p className="meta">
                             {new Date(item.created_at).toLocaleString()}
                           </p>
@@ -812,12 +845,11 @@ function App() {
               <div className="feature-section">
                 <h3>Galería de recuerdos</h3>
                 <p>
-                  Sube una foto mediante Imgbb; guardaremos el enlace en la tabla
-                  <code>galeria</code>.
+                  Nuestros recuerdos guardados para la eternidad.
                 </p>
                 <form className="gallery-form" onSubmit={handleGalleryUpload}>
                   <label htmlFor="galleryCaption" className="field-label">
-                    Pie de imagen
+                    Descripción
                   </label>
                   <input
                     id="galleryCaption"
@@ -828,19 +860,32 @@ function App() {
                     placeholder="Descripción breve"
                     value={galleryForm.caption}
                     onChange={handleGalleryFieldChange}
+                    required={true}
                   />
 
                   <label htmlFor="galleryFile" className="field-label">
                     Imagen
                   </label>
-                  <input
-                    id="galleryFile"
-                    name="file"
-                    type="file"
-                    accept="image/*"
-                    className="file-input"
-                    onChange={handleGalleryFieldChange}
-                  />
+                  <div className="file-upload">
+                    <label htmlFor="galleryFile" className="file-upload__button">
+                      <span>Seleccionar imagen</span>
+                    </label>
+                    <input
+                      id="galleryFile"
+                      name="file"
+                      type="file"
+                      accept="image/*"
+                      className="file-upload__input"
+                      onChange={handleGalleryFieldChange}
+                      required={true}
+                    />
+                    <p className="file-upload__hint">Archivos JPG o PNG (máx. 5MB)</p>
+                    {galleryForm.file ? (
+                      <p className="file-upload__filename" title={galleryForm.file.name}>
+                        {galleryForm.file.name}
+                      </p>
+                    ) : null}
+                  </div>
 
                   <button
                     type="submit"
@@ -867,6 +912,9 @@ function App() {
                         <img src={item.recurso_imagen} alt={item.pie_imagen || 'Recuerdo'} />
                         <div>
                           <strong>{item.pie_imagen || 'Sin pie de foto'}</strong>
+                          <p className="meta">
+                            Subido por {item.usuarios?.nombre_usuario ?? 'Usuario'}
+                          </p>
                           <p className="meta">
                             {new Date(item.created_at).toLocaleString()}
                           </p>
